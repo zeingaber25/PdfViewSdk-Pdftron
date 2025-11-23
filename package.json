@@ -5,7 +5,9 @@
   "module": "src/index.esm.js",
   "type": "module",
   "scripts": {
-    "build": "rollup -c"
+    "build": "rollup -c",
+    "copy-webviewer": "node scripts/copy-minimal-webviewer.js",
+    "copy-webviewer-ps": "powershell -ExecutionPolicy Bypass -File scripts/copy-minimal-webviewer.ps1"
   },
   "dependencies": {
     "@pdftron/webviewer": "^10.12.1"
