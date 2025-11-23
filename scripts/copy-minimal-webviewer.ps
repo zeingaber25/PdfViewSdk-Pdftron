@@ -1,0 +1,103 @@
+# PowerShell script to copy minimal PDFTron WebViewer files
+# Reduces bundle size from ~147MB to ~15MB
+
+$ErrorActionPreference = "Stop"
+
+Write-Host "`n========================================" -ForegroundColor Cyan
+Write-Host "PDFTron WebViewer - Minimal File Copy" -ForegroundColor Cyan
+Write-Host "========================================`n" -ForegroundColor Cyan
+
+# Set paths
+$source = Join-Path $PSScriptRoot "..\node_modules\@pdftron\webviewer\public"
+$target = Join-Path $PSScriptRoot "..\examples\plain-html\lib\webviewer"
+
+# Check if source exists
+if (-not (Test-Path $source)) {
+    Write-Host "ERROR: Source directory not found!" -ForegroundColor Red
+    Write-Host "Expected: $source" -ForegroundColor Yellow
+    Write-Host "`nPlease run 'npm install' first." -ForegroundColor Yellow
+    exit 1
+}
+
+Write-Host "Source: $source" -ForegroundColor Gray
+Write-Host "Target: $target`n" -ForegroundColor Gray
+
+# Remove existing target if it exists
+if (Test-Path $target) {
+    Write-Host "Removing existing directory..." -ForegroundColor Yellow
+    Remove-Item -Path $target -Recurse -Force
+}
+
+# Create target directories
+Write-Host "Creating directory structure..." -ForegroundColor Green
+New-Item -ItemType Directory -Force -Path "$target\core\pdf" | Out-Null
+New-Item -ItemType Directory -Force -Path "$target\core\assets" | Out-Null
+New-Item -ItemType Directory -Force -Path "$target\ui" | Out-Null
+
+$copiedFiles = @()
+$totalSize = 0
+
+function Copy-FileWithInfo {
+    param($src, $dst, $name)
+    
+    if (Test-Path $src) {
+        Copy-Item $src -Destination $dst -Force
+        $size = (Get-Item $dst).Length
+        $sizeKB = [math]::Round($size / 1KB, 2)
+        $sizeMB = [math]::Round($size / 1MB, 2)
+        
+        $script:totalSize += $size
+        $script:copiedFiles += $name
+        
+        if ($sizeMB -gt 1) {
+            Write-Host "  [OK] $name ($sizeMB MB)" -ForegroundColor Green
+        } else {
+            Write-Host "  [OK] $name ($sizeKB KB)" -ForegroundColor Green
+        }
+    } else {
+        Write-Host "  [!!] $name (NOT FOUND)" -ForegroundColor Red
+    }
+}
+
+Write-Host "`nCopying files...`n" -ForegroundColor Cyan
+
+# Copy main library
+Write-Host "Main Library:" -ForegroundColor Yellow
+Copy-FileWithInfo "$source\webviewer.min.js" "$target\webviewer.min.js" "webviewer.min.js"
+
+# Copy core PDF engine
+Write-Host "`nCore PDF Engine:" -ForegroundColor Yellow
+Copy-FileWithInfo "$source\core\pdf\PDFNet.js" "$target\core\pdf\PDFNet.js" "PDFNet.js"
+Copy-FileWithInfo "$source\core\pdf\PDFNetLean.wasm" "$target\core\pdf\PDFNetLean.wasm" "PDFNetLean.wasm"
+
+# Copy UI files
+Write-Host "`nUI Components:" -ForegroundColor Yellow
+Copy-FileWithInfo "$source\ui\index.html" "$target\ui\index.html" "ui/index.html"
+Copy-FileWithInfo "$source\ui\app.js" "$target\ui\app.js" "ui/app.js"
+Copy-FileWithInfo "$source\ui\app.css" "$target\ui\app.css" "ui/app.css"
+
+# Copy assets
+Write-Host "`nAssets:" -ForegroundColor Yellow
+Copy-FileWithInfo "$source\core\assets\viewer.html" "$target\core\assets\viewer.html" "core/assets/viewer.html"
+
+# Summary
+$totalMB = [math]::Round($totalSize / 1MB, 2)
+$fullSizeMB = 147
+$savings = [math]::Round((($fullSizeMB - $totalMB) / $fullSizeMB) * 100, 1)
+
+Write-Host "`n========================================" -ForegroundColor Cyan
+Write-Host "Copy Complete!" -ForegroundColor Green
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "Files copied:    $($copiedFiles.Count)" -ForegroundColor White
+Write-Host "Total size:      $totalMB MB" -ForegroundColor White
+Write-Host "Full PDFTron:    $fullSizeMB MB" -ForegroundColor Gray
+Write-Host "Savings:         $savings%" -ForegroundColor Green
+Write-Host "========================================`n" -ForegroundColor Cyan
+
+Write-Host "Target location:" -ForegroundColor Yellow
+Write-Host "$target`n" -ForegroundColor White
+
+Write-Host "Next steps:" -ForegroundColor Yellow
+Write-Host "1. Open examples/plain-html/pdftron.html in browser" -ForegroundColor White
+Write-Host "2. Test PDF viewing and annotations" -ForegroundColor White
+Write-Host "3. Customize as needed`n" -ForegroundColor White
