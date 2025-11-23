@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Reusable PDF SDK</title>
+  <style>
+    #viewer { width: 100%; height: 90vh; border: 1px solid #ccc; }
+  </style>
+</head>
+<body>
+  <div id="viewer"></div>
+
+  <!-- Include single JS file -->
+  <script src="dist/pdf-viewer-sdk.js"></script>
+  <script>
+    (async () => {
+      const sdk = await PdfViewerSDK.createPdfViewer({
+        container: document.getElementById('viewer'),
+        initialDoc: './samples/sample.pdf',
+      });
+    })();
+  </script>
+</body>
+</html>
