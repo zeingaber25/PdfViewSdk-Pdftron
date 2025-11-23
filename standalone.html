@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>PDF Viewer SDK - Standalone (No Build Required)</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; }
+    
+    #viewer { 
+      width: 100%; 
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .pdf-viewer-controls {
+      background: #333;
+      color: white;
+      padding: 10px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    
+    .pdf-viewer-controls button {
+      padding: 8px 16px;
+      background: #007bff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    
+    .pdf-viewer-controls button:hover {
+      background: #0056b3;
+    }
+    
+    .pdf-viewer-controls button:disabled {
+      background: #6c757d;
+      cursor: not-allowed;
+    }
+    
+    .pdf-viewer-controls span {
+      margin: 0 10px;
+    }
+    
+    .pdf-viewer-canvas-wrapper {
+      flex: 1;
+      overflow: auto;
+      position: relative;
+      background: #525659;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 20px;
+    }
+    
+    #pdf-canvas {
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      background: white;
+      position: relative;
+    }
+    
+    #signature-canvas {
+      position: absolute;
+      pointer-events: all;
+      cursor: crosshair;
+    }
+  </style>
+</head>
+<body>
+  <div id="viewer">
+    <div class="pdf-viewer-controls">
+      <button id="prev-page">Previous</button>
+      <span>Page: <span id="page-num">-</span> / <span id="page-count">-</span></span>
+      <button id="next-page">Next</button>
+      <button id="zoom-in">Zoom In</button>
+      <button id="zoom-out">Zoom Out</button>
+      <button id="add-signature">Add Signature</button>
+      <button id="save-signature">Save Signature</button>
+      <button id="clear-signature">Clear Signature</button>
+      <button id="download-pdf">Download PDF</button>
+    </div>
+    <div class="pdf-viewer-canvas-wrapper">
+      <div style="position: relative;">
+        <canvas id="pdf-canvas"></canvas>
+        <canvas id="signature-canvas" style="display:none;"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Include pdf-lib from CDN -->
+  <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  
+  <script type="module">
+    // Import PDF.js
+    import * as pdfjsLib from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.4.149/pdf.min.mjs';
+    
+    // Set worker path for PDF.js
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.4.149/pdf.worker.min.mjs';
+
+    class PdfViewerSDK {
+      constructor(container, options = {}) {
+        this.container = container;
+        this.pdfDoc = null;
+        this.currentPage = 1;
+        this.scale = 1.5;
+        this.canvas = document.getElementById('pdf-canvas');
+        this.canvasContext = this.canvas.getContext('2d');
+        this.signatureCanvas = document.getElementById('signature-canvas');
+        this.signatureContext = this.signatureCanvas.getContext('2d');
+        this.pdfBytes = null;
+        this.annotations = [];
+        this.isDrawingSignature = false;
+        this.signaturePoints = [];
+        
+        this.attachEventListeners();
+      }
+
+      attachEventListeners() {
+        document.getElementById('prev-page').addEventListener('click', () => this.goToPrevPage());
+        document.getElementById('next-page').addEventListener('click', () => this.goToNextPage());
+        document.getElementById('zoom-in').addEventListener('click', () => this.zoomIn());
+        document.getElementById('zoom-out').addEventListener('click', () => this.zoomOut());
+        document.getElementById('add-signature').addEventListener('click', () => this.enableSignatureMode());
+        document.getElementById('save-signature').addEventListener('click', () => this.saveSignature());
+        document.getElementById('clear-signature').addEventListener('click', () => this.clearSignature());
+        document.getElementById('download-pdf').addEventListener('click', () => this.downloadPDF());
+
+        // Signature drawing
+        this.signatureCanvas.addEventListener('mousedown', (e) => this.startSignature(e));
+        this.signatureCanvas.addEventListener('mousemove', (e) => this.drawSignature(e));
+        this.signatureCanvas.addEventListener('mouseup', () => this.endSignature());
+        
+        // Touch support for mobile
+        this.signatureCanvas.addEventListener('touchstart', (e) => {
+          e.preventDefault();
+          const touch = e.touches[0];
+          const mouseEvent = new MouseEvent('mousedown', {
+            clientX: touch.clientX,
+            clientY: touch.clientY
+          });
+          this.signatureCanvas.dispatchEvent(mouseEvent);
+        });
+        
+        this.signatureCanvas.addEventListener('touchmove', (e) => {
+          e.preventDefault();
+          const touch = e.touches[0];
+          const mouseEvent = new MouseEvent('mousemove', {
+            clientX: touch.clientX,
+            clientY: touch.clientY
+          });
+          this.signatureCanvas.dispatchEvent(mouseEvent);
+        });
+        
+        this.signatureCanvas.addEventListener('touchend', (e) => {
+          e.preventDefault();
+          const mouseEvent = new MouseEvent('mouseup', {});
+          this.signatureCanvas.dispatchEvent(mouseEvent);
+        });
+      }
+
+      async loadDocument(url) {
+        try {
+          // Fetch PDF as ArrayBuffer
+          const response = await fetch(url);
+          this.pdfBytes = await response.arrayBuffer();
+          
+          // Load with PDF.js
+          const loadingTask = pdfjsLib.getDocument({ data: this.pdfBytes });
+          this.pdfDoc = await loadingTask.promise;
+          
+          document.getElementById('page-count').textContent = this.pdfDoc.numPages;
+          await this.renderPage(this.currentPage);
+        } catch (error) {
+          console.error('Error loading PDF:', error);
+          alert('Failed to load PDF: ' + error.message);
+        }
+      }
+
+      async renderPage(pageNum) {
+        const page = await this.pdfDoc.getPage(pageNum);
+        const viewport = page.getViewport({ scale: this.scale });
+
+        this.canvas.width = viewport.width;
+        this.canvas.height = viewport.height;
+        this.signatureCanvas.width = viewport.width;
+        this.signatureCanvas.height = viewport.height;
+
+        const renderContext = {
+          canvasContext: this.canvasContext,
+          viewport: viewport
+        };
+
+        await page.render(renderContext).promise;
+        document.getElementById('page-num').textContent = pageNum;
+        this.currentPage = pageNum;
+        
+        // Re-render existing signatures on this page
+        this.renderExistingSignatures();
+      }
+      
+      renderExistingSignatures() {
+        this.signatureContext.clearRect(0, 0, this.signatureCanvas.width, this.signatureCanvas.height);
+        const pageAnnotations = this.annotations.filter(a => a.page === this.currentPage);
+        
+        for (const annotation of pageAnnotations) {
+          if (annotation.type === 'signature' && annotation.points.length > 0) {
+            this.signatureContext.beginPath();
+            this.signatureContext.moveTo(annotation.points[0].x, annotation.points[0].y);
+            
+            for (let i = 1; i < annotation.points.length; i++) {
+              this.signatureContext.lineTo(annotation.points[i].x, annotation.points[i].y);
+            }
+            
+            this.signatureContext.strokeStyle = '#000';
+            this.signatureContext.lineWidth = 2;
+            this.signatureContext.stroke();
+          }
+        }
+      }
+
+      goToPrevPage() {
+        if (this.currentPage > 1) {
+          this.renderPage(this.currentPage - 1);
+        }
+      }
+
+      goToNextPage() {
+        if (this.currentPage < this.pdfDoc.numPages) {
+          this.renderPage(this.currentPage + 1);
+        }
+      }
+
+      zoomIn() {
+        this.scale += 0.25;
+        this.renderPage(this.currentPage);
+      }
+
+      zoomOut() {
+        if (this.scale > 0.5) {
+          this.scale -= 0.25;
+          this.renderPage(this.currentPage);
+        }
+      }
+
+      enableSignatureMode() {
+        this.signatureCanvas.style.display = 'block';
+        this.signatureCanvas.style.cursor = 'crosshair';
+        this.isDrawingSignature = false;
+        this.signaturePoints = [];
+      }
+      
+      saveSignature() {
+        if (this.signaturePoints.length > 0) {
+          this.annotations.push({
+            page: this.currentPage,
+            type: 'signature',
+            points: [...this.signaturePoints]
+          });
+          this.signaturePoints = [];
+          alert('Signature saved! You can now add more signatures or download the PDF.');
+        }
+      }
+      
+      clearSignature() {
+        this.signatureContext.clearRect(0, 0, this.signatureCanvas.width, this.signatureCanvas.height);
+        this.signaturePoints = [];
+        // Remove annotations from current page
+        this.annotations = this.annotations.filter(a => a.page !== this.currentPage);
+      }
+
+      startSignature(e) {
+        this.isDrawingSignature = true;
+        const rect = this.signatureCanvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        
+        this.signatureContext.beginPath();
+        this.signatureContext.moveTo(x, y);
+        this.signaturePoints.push({ x, y });
+      }
+
+      drawSignature(e) {
+        if (!this.isDrawingSignature) return;
+        
+        const rect = this.signatureCanvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        
+        this.signatureContext.lineTo(x, y);
+        this.signatureContext.strokeStyle = '#000';
+        this.signatureContext.lineWidth = 2;
+        this.signatureContext.stroke();
+        
+        this.signaturePoints.push({ x, y });
+      }
+
+      endSignature() {
+        this.isDrawingSignature = false;
+      }
+
+      async downloadPDF() {
+        try {
+          if (this.annotations.length === 0) {
+            alert('No signatures to save. Please add signatures first.');
+            return;
+          }
+          
+          const pdfDoc = await PDFLib.PDFDocument.load(this.pdfBytes);
+          
+          // Add annotations (signatures) to PDF
+          for (const annotation of this.annotations) {
+            const page = pdfDoc.getPages()[annotation.page - 1];
+            const { height } = page.getSize();
+            
+            if (annotation.type === 'signature' && annotation.points.length > 0) {
+              // Draw signature path on PDF
+              const points = annotation.points;
+              for (let i = 1; i < points.length; i++) {
+                page.drawLine({
+                  start: { 
+                    x: points[i-1].x / this.scale, 
+                    y: height - (points[i-1].y / this.scale) 
+                  },
+                  end: { 
+                    x: points[i].x / this.scale, 
+                    y: height - (points[i].y / this.scale) 
+                  },
+                  thickness: 2,
+                  color: PDFLib.rgb(0, 0, 0)
+                });
+              }
+            }
+          }
+          
+          const pdfBytesModified = await pdfDoc.save();
+          const blob = new Blob([pdfBytesModified], { type: 'application/pdf' });
+          const url = URL.createObjectURL(blob);
+          
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'signed-document.pdf';
+          a.click();
+          
+          URL.revokeObjectURL(url);
+          alert('PDF downloaded successfully!');
+        } catch (error) {
+          console.error('Error downloading PDF:', error);
+          alert('Failed to download PDF: ' + error.message);
+        }
+      }
+    }
+
+    // Initialize the viewer
+    (async () => {
+      try {
+        const viewer = new PdfViewerSDK(document.getElementById('viewer'));
+        await viewer.loadDocument('./samples/sample.pdf');
+        console.log('PDF Viewer initialized successfully');
+      } catch (error) {
+        console.error('Failed to initialize PDF viewer:', error);
+      }
+    })();
+  </script>
+</body>
+</html>
